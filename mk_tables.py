@@ -48,7 +48,8 @@ if __name__ == '__main__':
   # Find the last archive at or before archive_target
   archive_date_index = min(bisect_left(archive_dates, archive_target), len(archive_dates) - 1)
   archive_date = archive_dates[archive_date_index]
-  print(f'{archive_date=}')
+  schema_name = f'a{archive_date.replace('-', '')}'
+  print(f'{archive_date=} {schema_name}')
 
   # Be sure all three archive files are available
   fail = False
@@ -71,17 +72,18 @@ if __name__ == '__main__':
     exit()
 
   # Create the schema and build the tables
-  schema = f'a{archive_date.replace('-', '')}'
   with psycopg.connect('dbname=cuny_curriculum') as conn:
     with conn.cursor() as cursor:
-      cursor.execute(f"drop schema if exists {schema} cascade")
-      cursor.execute(f"create schema {schema}")
+      cursor.execute(f"drop schema if exists {schema_name} cascade")
+      cursor.execute(f"create schema {schema_name}")
 
       # transfer_rules
       cursor.execute(f"""
-      create table {schema}.transfer_rules (
-        rule_key                text primary key,
-        effective_date          date
+      create table {schema_name}.transfer_rules (
+        id                      serial primary key,
+        rule_key                text unique,
+        effective_date          date,
+        description             text default ''
       )
       """)
       with bz2.open(effective_dates_archive, mode='rt') as infile:
@@ -90,49 +92,58 @@ if __name__ == '__main__':
         reader = csv.reader(infile)
         for line in reader:
           cursor.execute(f"""
-          insert into {schema}.transfer_rules values (%s, %s)
+          insert into {schema_name}.transfer_rules values (default, %s, %s, default)
           """, line)
       cursor.execute(f"""
-      select count(*) from {schema}.transfer_rules
+      select count(*) from {schema_name}.transfer_rules
       """)
       print(f'{cursor.fetchone()[0]:,}')
 
       # source_courses
       cursor.execute(f"""
-      create table {schema}.source_courses (
+      create table {schema_name}.source_courses (
         id          serial primary key,
-        rule_key    text references {schema}.transfer_rules,
+        rule_key    text references {schema_name}.transfer_rules(rule_key),
+        src_inst    text,
+        dst_inst    text,
         course_id   integer,
         offer_nbr   integer,
         min_credits real,
         max_credits real,
         credit_src  text,
-        min_gpa     real,
-        max_gpa     real
-      )
+        min_grade   real,
+        max_grade   real      )
       """)
       with bz2.open(source_archive, mode='rt') as infile:
         print('source courses:      ', end='')
         sys.stdout.flush()
         reader = csv.reader(infile)
         for line in reader:
+          # Break out fields for the source and destination institutions
+          rule_key = line[0]
+          src_inst = rule_key[0:5]
+          dst_inst = rule_key[6:11]
+          line = [line[0], src_inst, dst_inst] + line[1:]
+          # Normalize grade range
+          line[-2] = 0. if float(line[-2]) < 0.7 else float(line[-2])
+          line[-1] = min(float(line[-1]), 4.0)
           cursor.execute(f"""
-          insert into {schema}.source_courses values (default, %s, %s, %s, %s, %s, %s, %s, %s)
+          insert into {schema_name}.source_courses
+                 values (default, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
           """, line)
       cursor.execute(f"""
-      select count(*) from {schema}.source_courses
+      select count(*) from {schema_name}.source_courses
       """)
       print(f'{cursor.fetchone()[0]:,}')
 
       # destination_courses
       cursor.execute(f"""
-      create table {schema}.destination_courses (
+      create table {schema_name}.destination_courses (
         id        serial primary key,
-        rule_key  text references {schema}.transfer_rules,
+        rule_key  text references {schema_name}.transfer_rules(rule_key),
         course_id integer,
         offer_nbr integer,
-        credits   real
-      )
+        credits   real      )
       """)
       with bz2.open(destination_archive, mode='rt') as infile:
         print('destination courses: ', end='')
@@ -140,17 +151,17 @@ if __name__ == '__main__':
         reader = csv.reader(infile)
         for line in reader:
           cursor.execute(f"""
-          insert into {schema}.destination_courses values(default, %s, %s, %s, %s)
+          insert into {schema_name}.destination_courses values(default, %s, %s, %s, %s)
           """, line)
       cursor.execute(f"""
-      select count(*) from {schema}.destination_courses
+      select count(*) from {schema_name}.destination_courses
       """)
       print(f'{cursor.fetchone()[0]:,}')
 
   # Show mean, median, and frequency distribution for number of source|destination courses per rule?
   if args.statistics:
     for table_name in ['source_courses', 'destination_courses']:
-      mean, median, distribution = statistics(schema, table_name)
+      mean, median, distribution = statistics(schema_name, table_name)
       print(f'{table_name}: {mean:.4} {median:.2}')
       for index, value in distribution.items():
         print(f'[{index}] {value:9,}')
