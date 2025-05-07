@@ -26,6 +26,62 @@ courses_cache = {(row['course_id'], row['offer_nbr']): row for row in cursor}
 # exit(f'{sum(1 for c in courses_cache if c['is_active'] and c['is_bkcr']):8,} blanket')
 
 
+# _grade()
+# -------------------------------------------------------------------------------------------------
+def _grade(min_grade: float, max_grade: float) -> str:
+  """ Convert numerical gpa range to description of required grade in letter-grade form.
+  """
+
+  # Convert GPA values to letter grades by table lookup.
+  # int(round(3×GPA)) gives the index into the letters table.
+  # Index positions 0 and 1 aren't actually used.
+  """
+          GPA  3×GPA  Index  Letter
+          4.3   12.9     13      A+
+          4.0   12.0     12      A
+          3.7   11.1     11      A-
+          3.3    9.9     10      B+
+          3.0    9.0      9      B
+          2.7    8.1      8      B-
+          2.3    6.9      7      C+
+          2.0    6.0      6      C
+          1.7    5.1      5      C-
+          1.3    3.9      4      D+
+          1.0    3.0      3      D
+          0.7    2.1      2      D-
+  """
+  grade_map = {
+    0.7: "D-",
+    1.0: "D",
+    1.3: "D+",
+    1.7: "C-",
+    2.0: "C",
+    2.3: "C+",
+    2.7: "B-",
+    3.0: "B",
+    3.3: "B+",
+    3.7: "A-",
+    4.0: "A"
+  }
+
+  def is_close(a, b, eps=1e-6):
+    return abs(a - b) < eps
+
+  def label(gpa):
+      return grade_map.get(round(gpa, 1), f"{gpa:.1f}")
+
+  if is_close(min_grade, max_grade):
+      return f"a grade of {label(min_grade)}"
+  elif is_close(min_grade, 0.0) and is_close(max_grade, 4.0):
+      return "any grade"
+  elif is_close(min_grade, 0.0):
+      return f"below {label(max_grade)}"
+  elif is_close(max_grade, 4.0):
+      return f"{label(min_grade)} or above"
+  else:
+      return f"between {label(min_grade)} and {label(max_grade)}"
+
+
 def describe(schema_name: str, rule_key: str) -> str:
   """Gather source and destination course_id:offer_nbr values, and format the rule description.
   """
