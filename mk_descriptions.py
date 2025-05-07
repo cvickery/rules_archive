@@ -26,15 +26,15 @@ courses_cache = {(row['course_id'], row['offer_nbr']): row for row in cursor}
 # exit(f'{sum(1 for c in courses_cache if c['is_active'] and c['is_bkcr']):8,} blanket')
 
 
-# _grade()
+# _grade_restriction()
 # -------------------------------------------------------------------------------------------------
-def _grade(min_grade: float, max_grade: float) -> str:
+def grade_restriction(min_grade: float, max_grade: float) -> str:
   """ Convert numerical gpa range to description of required grade in letter-grade form.
+      Returned string is empty for no restriction. Otherwise it’s a square-bracketed phrase
+      formatted to follow the course string, such as “CSCI 100 [B or above]”
   """
-
   # Convert GPA values to letter grades by table lookup.
   # int(round(3×GPA)) gives the index into the letters table.
-  # Index positions 0 and 1 aren't actually used.
   """
           GPA  3×GPA  Index  Letter
           4.3   12.9     13      A+
@@ -67,19 +67,27 @@ def _grade(min_grade: float, max_grade: float) -> str:
   def is_close(a, b, eps=1e-6):
     return abs(a - b) < eps
 
-  def label(gpa):
-      return grade_map.get(round(gpa, 1), f"{gpa:.1f}")
+  def label(grade: float):
+    for k, v in grade_map.items():
+      if grade <= k:
+        return v
+    raise ValueError(f'{grade:.2} is not a valid grade value')
 
-  if is_close(min_grade, max_grade):
-      return f"a grade of {label(min_grade)}"
-  elif is_close(min_grade, 0.0) and is_close(max_grade, 4.0):
-      return "any grade"
-  elif is_close(min_grade, 0.0):
-      return f"below {label(max_grade)}"
+  min_grade = float(min_grade)
+  max_grade = float(max_grade)
+  assert min_grade <= max_grade, f'Invalid min/max grade pair: ({min_grade}, {max_grade})'
+  if is_close(min_grade, 0.0):
+    if is_close(max_grade, 4.0):
+      return ''  # Common case: no grade restriction
+    else:
+      return f' [below {label(max_grade)}]'
   elif is_close(max_grade, 4.0):
-      return f"{label(min_grade)} or above"
+    return f' [{label(min_grade)} or above]'
+  elif label(min_grade) == label(max_grade):
+    return f' [exactly {label(min_grade)}]'  # Unlikely
   else:
-      return f"between {label(min_grade)} and {label(max_grade)}"
+    # Useful for detecting overlapping ranges across multiple rules
+    return f' [between {label(min_grade)} and {label(max_grade)}]'
 
 
 def describe(schema_name: str, rule_key: str) -> str:
@@ -95,6 +103,8 @@ def describe(schema_name: str, rule_key: str) -> str:
     course_details = courses_cache[(source_course['course_id'], source_course['offer_nbr'])]
     for detail in ['course', 'title', 'is_active', 'is_mesg', 'is_bkcr']:
       source_course[detail] = course_details[detail]
+      source_course['grade_restriction'] = grade_restriction(source_course['min_grade'],
+                                                             source_course['max_grade'])
     print(source_course)
 
   cursor.execute(f"""
