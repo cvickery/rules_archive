@@ -2,22 +2,59 @@
 """Generate the canonical description for each rule in a schema’s transfer_rules table.
 """
 
-from collections import namedtuple
 import psycopg
+
 from argparse import ArgumentParser
+from psycopg.rows import dict_row
 
 # Cursor for accessing the cuny_courses table in the public schema
 conn = psycopg.connect('dbname=cuny_curriculum')
-cursor = conn.cursor()
+cursor = conn.cursor(row_factory=dict_row)
 
-Course = namedtuple('Course', 'institution course title')
+cursor.execute("""
+select course_id, offer_nbr, institution, discipline||' '||catalog_number as course, title,
+       course_status = 'A' as is_active,
+       designation in ('MLA', 'MNL') as is_mesg,
+       attributes ~* 'bkcr' as is_bkcr
+  from cuny_courses""")
+courses_cache = {(row['course_id'], row['offer_nbr']): row for row in cursor}
+
+# Some basic characteristics of the CUNY catalog
+# print(f'{len(courses_cache):8,} courses')
+# print(f'{sum(1 for c in courses_cache if c['is_active']):8,} active')
+# print(f'{sum(1 for c in courses_cache if c['is_active'] and c['is_mesg']):8,} message')
+# exit(f'{sum(1 for c in courses_cache if c['is_active'] and c['is_bkcr']):8,} blanket')
 
 
-def mk_description(schema_name: str, rule_key: str) -> str:
+def describe(schema_name: str, rule_key: str) -> str:
   """Gather source and destination course_id:offer_nbr values, and format the rule description.
   """
-  cursor.execute(f"""{schema_name}
-  """)
+  cursor.execute(f"""
+  select *
+    from  {schema_name}.source_courses
+    where rule_key = %s
+  """, (rule_key, ))
+  source_courses = cursor.fetchall()
+  for source_course in source_courses:
+    course_details = courses_cache[(source_course['course_id'], source_course['offer_nbr'])]
+    for detail in ['course', 'title', 'is_active', 'is_mesg', 'is_bkcr']:
+      source_course[detail] = course_details[detail]
+    print(source_course)
+
+  cursor.execute(f"""
+  select *
+    from  {schema_name}.destination_courses
+    where rule_key = %s
+  """, (rule_key, ))
+  destination_courses = cursor.fetchall()
+  for destination_course in destination_courses:
+    course_details = courses_cache[(destination_course['course_id'],
+                                    destination_course['offer_nbr'])]
+    for detail in ['course', 'title', 'is_active', 'is_mesg', 'is_bkcr']:
+      destination_course[detail] = course_details[detail]
+    print(destination_course)
+
+  return f'{rule_key} is a very nice rule'
 
 
 # main()
@@ -43,7 +80,7 @@ if __name__ == '__main__':
    where schema_name ~* '^a20'
    order by schema_name
   """)
-  schemata = [row[0] for row in cursor]
+  schemata = [row['schema_name'] for row in cursor]
   if len(schemata) < 1:
     exit('No schemata available')
   if args.schema_name:
@@ -57,7 +94,8 @@ if __name__ == '__main__':
   rule_keys = args.rule_keys
   if 'all' in rule_keys:
     cursor.execute(f'select rule_key from {schema_name}.transfer_rules order by rule_key')
-  rule_keys = [row[0] for row in cursor]
+    rule_keys = [row['rule_key'] for row in cursor]
+
   courses = dict()  # to short-circuit rule_keys lookup below
 
   if not rule_keys:
@@ -81,7 +119,9 @@ if __name__ == '__main__':
         s = 's'
     print(f'There are {cursor.rowcount} {args.subject.strip('^$')} '
           f'{args.catalog_number.strip('^$')} course{s}')
-    courses = {row[0:2]: Course._make([row[4][0:3].lower(), row[2], row[3]]) for row in cursor}
+    courses = {(row['course_id'], row['offer_nbr']):
+               Course._make([row['institution'][0:3].lower(),
+                             row['course'], row['title']]) for row in cursor}
 
     for course in courses.values():
       print(f'  {course.institution} {course.course}: {course.title}')
@@ -101,7 +141,7 @@ if __name__ == '__main__':
      where course_id = %s and offer_nbr = %s
     """, course + course)
     for row in cursor:
-      rule_key = row[0]
+      rule_key = row['rule_key']
       src, dst, *_ = rule_key.split(':')
       if ((src[0:3].lower() == args.sending_institution[0:3].lower()) or
           (dst[0:3].lower() == args.receiving_institution[0:3].lower())):
@@ -111,7 +151,6 @@ if __name__ == '__main__':
           rule_keys.append(rule_key)
   num_rules = len(rule_keys)
   s = '' if num_rules == 1 else 's'
-  print(f'{len(rule_keys)} rule{s} from {args.sending_institution[0:3].lower()} to '
-        f'{args.receiving_institution[0:3].lower()}')
+  print(f'Describing {len(rule_keys)} rule{s}')
   for rule_key in sorted(rule_keys):
-    print(rule_key)
+    print(describe(schema_name, rule_key))
