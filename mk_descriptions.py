@@ -26,7 +26,24 @@ courses_cache = {(row['course_id'], row['offer_nbr']): row for row in cursor}
 # exit(f'{sum(1 for c in courses_cache if c['is_active'] and c['is_bkcr']):8,} blanket')
 
 
-# _grade_restriction()
+# oxfordize()
+# -------------------------------------------------------------------------------------------------
+def oxfordize(source_list: list, list_type: str = 'and') -> str:
+  """Apply oxford-comma pattern to a list of strings."""
+  sentence = ', '.join([' '.join(q) if isinstance(q, tuple) else q for q in source_list])
+  if comma_count := sentence.count(','):
+    assert list_type.lower() in ['and', 'or'], f'{sentence=} {comma_count=} {list_type=}'
+    conjunction_str = f' {list_type}'
+    if comma_count == 1:
+      return sentence.replace(',', conjunction_str)
+    else:
+      last_comma = sentence.rindex(',') + 1
+      return sentence[:last_comma] + conjunction_str + sentence[last_comma:]
+  else:
+    return sentence
+
+
+# grade_restriction()
 # -------------------------------------------------------------------------------------------------
 def grade_restriction(min_grade: float, max_grade: float) -> str:
   """ Convert numerical gpa range to description of required grade in letter-grade form.
@@ -99,13 +116,15 @@ def describe(schema_name: str, rule_key: str) -> str:
     where rule_key = %s
   """, (rule_key, ))
   source_courses = cursor.fetchall()
+  source_list = []
   for source_course in source_courses:
     course_details = courses_cache[(source_course['course_id'], source_course['offer_nbr'])]
     for detail in ['course', 'title', 'is_active', 'is_mesg', 'is_bkcr']:
       source_course[detail] = course_details[detail]
       source_course['grade_restriction'] = grade_restriction(source_course['min_grade'],
                                                              source_course['max_grade'])
-    print(source_course)
+    status = '' if course_details['is_active'] else '[Inactive]'
+    source_list.append(f'{source_course['course']}{source_course['grade_restriction']}{status}')
 
   cursor.execute(f"""
   select *
@@ -113,14 +132,18 @@ def describe(schema_name: str, rule_key: str) -> str:
     where rule_key = %s
   """, (rule_key, ))
   destination_courses = cursor.fetchall()
+  destination_list = []
   for destination_course in destination_courses:
     course_details = courses_cache[(destination_course['course_id'],
                                     destination_course['offer_nbr'])]
     for detail in ['course', 'title', 'is_active', 'is_mesg', 'is_bkcr']:
       destination_course[detail] = course_details[detail]
-    print(destination_course)
+    status = '' if course_details['is_active'] else '[Inactive]'
+    status += '[MESG]' if course_details['is_mesg'] else ''
+    status += '[BKCR]' if course_details['is_bkcr'] else ''
+    destination_list.append(f'{destination_course['course']}{status}')
 
-  return f'{rule_key} is a very nice rule'
+  return f'{oxfordize(source_list)} => {oxfordize(destination_list)}'
 
 
 # main()
@@ -217,6 +240,8 @@ if __name__ == '__main__':
           rule_keys.append(rule_key)
   num_rules = len(rule_keys)
   s = '' if num_rules == 1 else 's'
-  print(f'Describing {len(rule_keys)} rule{s}')
+  num_keys = len(rule_keys)
+  n = 0
   for rule_key in sorted(rule_keys):
-    print(describe(schema_name, rule_key))
+    n += 1
+    print(f'{n:,}/{num_keys:,} {rule_key:22} {describe(schema_name, rule_key)}')
