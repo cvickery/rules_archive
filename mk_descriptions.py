@@ -5,12 +5,23 @@
 import psycopg
 
 from argparse import ArgumentParser
+from collections import defaultdict, namedtuple
+from dataclasses import dataclass
 from psycopg.rows import dict_row
 
-# Cursor for accessing the cuny_courses table in the public schema
+
+@dataclass
+class Context:
+    source_courses: dict
+    destination_courses: dict
+    transfer_rules: dict
+
+
+# Module-wide db access
 conn = psycopg.connect('dbname=cuny_curriculum')
 cursor = conn.cursor(row_factory=dict_row)
 
+# The cuny_courses cache will be used regardless of the schema being processed
 cursor.execute("""
 select course_id, offer_nbr, institution, discipline||' '||catalog_number as course, title,
        course_status = 'A' as is_active,
@@ -24,6 +35,8 @@ courses_cache = {(row['course_id'], row['offer_nbr']): row for row in cursor}
 # print(f'{sum(1 for c in courses_cache if c['is_active']):8,} active')
 # print(f'{sum(1 for c in courses_cache if c['is_active'] and c['is_mesg']):8,} message')
 # exit(f'{sum(1 for c in courses_cache if c['is_active'] and c['is_bkcr']):8,} blanket')
+
+Course = namedtuple('Course', 'institution course title')
 
 
 # oxfordize()
@@ -107,43 +120,13 @@ def grade_restriction(min_grade: float, max_grade: float) -> str:
     return f' [between {label(min_grade)} and {label(max_grade)}]'
 
 
-def describe(schema_name: str, rule_key: str) -> str:
+def describe(rule_key: str, ctx: Context) -> str:
   """Gather source and destination course_id:offer_nbr values, and format the rule description.
   """
-  cursor.execute(f"""
-  select *
-    from  {schema_name}.source_courses
-    where rule_key = %s
-  """, (rule_key, ))
-  source_courses = cursor.fetchall()
-  source_list = []
-  for source_course in source_courses:
-    course_details = courses_cache[(source_course['course_id'], source_course['offer_nbr'])]
-    for detail in ['course', 'title', 'is_active', 'is_mesg', 'is_bkcr']:
-      source_course[detail] = course_details[detail]
-      source_course['grade_restriction'] = grade_restriction(source_course['min_grade'],
-                                                             source_course['max_grade'])
-    status = '' if course_details['is_active'] else '[Inactive]'
-    source_list.append(f'{source_course['course']}{source_course['grade_restriction']}{status}')
-
-  cursor.execute(f"""
-  select *
-    from  {schema_name}.destination_courses
-    where rule_key = %s
-  """, (rule_key, ))
-  destination_courses = cursor.fetchall()
-  destination_list = []
-  for destination_course in destination_courses:
-    course_details = courses_cache[(destination_course['course_id'],
-                                    destination_course['offer_nbr'])]
-    for detail in ['course', 'title', 'is_active', 'is_mesg', 'is_bkcr']:
-      destination_course[detail] = course_details[detail]
-    status = '' if course_details['is_active'] else '[Inactive]'
-    status += '[MESG]' if course_details['is_mesg'] else ''
-    status += '[BKCR]' if course_details['is_bkcr'] else ''
-    destination_list.append(f'{destination_course['course']}{status}')
-
-  return f'{oxfordize(source_list)} => {oxfordize(destination_list)}'
+  ctx.transfer_rules[rule_key] = (f'{oxfordize(ctx.source_courses[rule_key])}'
+                                  f' => '
+                                  f'{oxfordize(ctx.destination_courses[rule_key])}')
+  return ctx.transfer_rules[rule_key]
 
 
 # main()
@@ -159,6 +142,7 @@ if __name__ == '__main__':
   parser.add_argument('--subject', '-su', default='SEYS')
   parser.add_argument('--catalog_number', '-cn', default='^49.*')
   parser.add_argument('--direction', '-di', default='both')
+  parser.add_argument('--update_db', '-up', action='store_true')
   parser.add_argument('rule_keys', nargs='*')
   args = parser.parse_args()
 
@@ -180,10 +164,72 @@ if __name__ == '__main__':
     # Use the most-recent schema available.
     schema_name = schemata[-1]
 
+  # Create the context for this schema
+  ctx = Context(defaultdict(list), defaultdict(list), dict())
+  # source_courses
+  cursor.execute(f'select * from {schema_name}.source_courses')
+  for source_course in cursor:
+    try:
+      course_details = courses_cache[(source_course['course_id'], source_course['offer_nbr'])]
+      course_details['grade_restriction'] = grade_restriction(source_course['min_grade'],
+                                                              source_course['max_grade'])
+      status = '' if course_details['is_active'] else '[Inactive]'
+    except KeyError:
+      course_details = {'is_active': False,
+                        'course': 'Unknown',
+                        'status': 'Inactive',
+                        'grade_restriction': ''}
+    ctx.source_courses[source_course['rule_key']].append(f'{course_details['course']}'
+                                                         f'{course_details['grade_restriction']}'
+                                                         f'{status}')
+  # destination_courses
+  cursor.execute(f'select * from {schema_name}.destination_courses')
+  for destination_course in cursor:
+    try:
+      course_details = courses_cache[(destination_course['course_id'],
+                                      destination_course['offer_nbr'])]
+      status = '' if course_details['is_active'] else '[Inactive]'
+      status += '[MESG]' if course_details['is_mesg'] else ''
+      status += '[BKCR]' if course_details['is_bkcr'] else ''
+    except KeyError:
+      course_details = {'course': 'Unknown'}
+      status = 'Inactive'
+    ctx.destination_courses[destination_course['rule_key']].append(f'{course_details['course']}'
+                                                                   f'{status}')
+  # transfer_rules
+  cursor.execute(f'select * from {schema_name}.transfer_rules')
+  ctx.transfer_rules = {row['rule_key']: row['description'] for row in cursor}
+
   rule_keys = args.rule_keys
+  do_update = False
+
   if 'all' in rule_keys:
-    cursor.execute(f'select rule_key from {schema_name}.transfer_rules order by rule_key')
-    rule_keys = [row['rule_key'] for row in cursor]
+    do_update = args.update_db  # Have to ask for it explicitly
+    # Generate the descriptions
+    for rule_key in ctx.transfer_rules:
+      description = describe(rule_key, ctx)
+      if not do_update:
+        print(f'{rule_key}: {description}')
+    if do_update:
+      # Bulk update the schema’s transfer_rules table, 100K rows at a time.
+      sql = psycopg.sql
+      transfer_rules_list = list(ctx.transfer_rules.items())
+      chunk_size = 100_000
+      for index in range(0, len(transfer_rules_list), chunk_size):
+        print(f'\r{index}')
+        chunk = transfer_rules_list[index:index + chunk_size]
+        values_sql = sql.SQL(', ').join(sql.SQL('({},{})').format(sql.Literal(rule_key),
+                                                                  sql.Literal(description))
+                                        for rule_key, description in chunk)
+        query = sql.SQL("""
+        update {schema_name}.transfer_rules as t
+           set description = v.description
+          from (values {values}) as v(rule_key, description)
+         where t.rule_key = v.rule_key
+        """).format(schema_name=sql.Identifier(schema_name), values=values_sql)
+        cursor.execute(query)
+      print()
+      exit()
 
   courses = dict()  # to short-circuit rule_keys lookup below
 
@@ -232,16 +278,30 @@ if __name__ == '__main__':
     for row in cursor:
       rule_key = row['rule_key']
       src, dst, *_ = rule_key.split(':')
-      if ((src[0:3].lower() == args.sending_institution[0:3].lower()) or
+      if ((src[0:3].lower() == args.sending_institution[0:3].lower()) and
           (dst[0:3].lower() == args.receiving_institution[0:3].lower())):
         if sending:
           rule_keys.append(rule_key)
         if receiving:
           rule_keys.append(rule_key)
+
   num_rules = len(rule_keys)
-  s = '' if num_rules == 1 else 's'
-  num_keys = len(rule_keys)
-  n = 0
-  for rule_key in sorted(rule_keys):
-    n += 1
-    print(f'{n:,}/{num_keys:,} {rule_key:22} {describe(schema_name, rule_key)}')
+  if num_rules:
+    s = '' if num_rules == 1 else 's'
+    num_keys = len(rule_keys)
+    n = 0
+    for rule_key in sorted(rule_keys):
+      n += 1
+      description = describe(rule_key, ctx)
+      print(f'\r{n:,}/{num_keys:,} ', end='')
+      if do_update:
+        cursor.execute(f"""
+        update {schema_name}.transfer_rules
+           set description = %s
+         where rule_key = %s
+        """, (description, rule_key))
+      else:
+        print(f'{rule_key:22} {description:100}', end='')
+  else:
+    print('No matching rules')
+  print()
