@@ -18,7 +18,7 @@ class Context:
 
 
 # Module-wide db access
-conn = psycopg.connect('dbname=cuny_curriculum')
+conn = psycopg.connect('dbname=cuny_curriculum', autocommit=True)
 cursor = conn.cursor(row_factory=dict_row)
 
 # The cuny_courses cache will be used regardless of the schema being processed
