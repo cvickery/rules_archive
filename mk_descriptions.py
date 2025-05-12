@@ -215,8 +215,9 @@ if __name__ == '__main__':
       sql = psycopg.sql
       transfer_rules_list = list(ctx.transfer_rules.items())
       chunk_size = 100_000
-      for index in range(0, len(transfer_rules_list), chunk_size):
-        print(f'\r{index}')
+      num_rules = len(transfer_rules_list)
+      for index in range(0, num_rules, chunk_size):
+        print(f'\r{index:,}/{num_rules:,}', end='')
         chunk = transfer_rules_list[index:index + chunk_size]
         values_sql = sql.SQL(', ').join(sql.SQL('({},{})').format(sql.Literal(rule_key),
                                                                   sql.Literal(description))
