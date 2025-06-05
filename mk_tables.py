@@ -1,5 +1,5 @@
 #! /usr/local/bin/python3
-"""Give a date, find the closest rules_archive set, and build a date-stamped
+"""Given a date, find the closest rules_archive set, and build a date-stamped
    version of the transfer_rules, source_courses, and destination_courses tables.
 
    Each archive gets its own date-named schema.
@@ -7,6 +7,7 @@
 
 import bz2
 import csv
+import datetime
 import psycopg
 import subprocess
 import sys
@@ -30,10 +31,10 @@ if __name__ == '__main__':
   archive_dates.sort()
   print(f'{len(archive_dates)} archives between {archive_dates[0]} to {archive_dates[-1]}')
 
-  # Get requested archive date
+  # Get requested archive date: default is the latest one available.
   parser = ArgumentParser('Create a set of transfer rule tables ')
 
-  parser.add_argument('--archive_date', '-ad')
+  parser.add_argument('--archive_date', '-ad', default=f'{datetime.date.today()}')
   parser.add_argument('--statistics', '-s')
   args = parser.parse_args()
   try:
