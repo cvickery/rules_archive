@@ -3,6 +3,7 @@
 """
 
 import psycopg
+import shutil
 
 from argparse import ArgumentParser
 from collections import defaultdict, namedtuple
@@ -143,7 +144,7 @@ if __name__ == '__main__':
   parser.add_argument('--catalog_number', '-cn', default='^49.*')
   parser.add_argument('--direction', '-di', default='both')
   parser.add_argument('--update_db', '-up', action='store_true')
-  parser.add_argument('rule_keys', nargs='*')
+  parser.add_argument('rule_keys', nargs='*', default=['all'])
   args = parser.parse_args()
 
   # Which schema?
@@ -164,10 +165,14 @@ if __name__ == '__main__':
     # Use the most-recent schema available.
     schema_name = schemata[-1]
 
+  print(f'Generate descriptions for {schema_name}')
+
   # Create the context for this schema
   ctx = Context(defaultdict(list), defaultdict(list), dict())
   # source_courses
   cursor.execute(f'select * from {schema_name}.source_courses')
+  s = '' if cursor.rowcount == 1 else 's'
+  print(f'{cursor.rowcount:,} source course{s}')
   for source_course in cursor:
     try:
       course_details = courses_cache[(source_course['course_id'], source_course['offer_nbr'])]
@@ -184,6 +189,8 @@ if __name__ == '__main__':
                                                          f'{status}')
   # destination_courses
   cursor.execute(f'select * from {schema_name}.destination_courses')
+  s = '' if cursor.rowcount == 1 else 's'
+  print(f'{cursor.rowcount:,} destination course{s}')
   for destination_course in cursor:
     try:
       course_details = courses_cache[(destination_course['course_id'],
@@ -198,6 +205,8 @@ if __name__ == '__main__':
                                                                    f'{status}')
   # transfer_rules
   cursor.execute(f'select * from {schema_name}.transfer_rules')
+  s = '' if cursor.rowcount == 1 else 's'
+  print(f'{cursor.rowcount:,} transfer rule{s}')
   ctx.transfer_rules = {row['rule_key']: row['description'] for row in cursor}
 
   rule_keys = args.rule_keys
@@ -205,13 +214,19 @@ if __name__ == '__main__':
 
   if 'all' in rule_keys:
     do_update = args.update_db  # Have to ask for it explicitly
+    print(f'Generating all descriptions with {do_update=}')
+    terminal_width = shutil.get_terminal_size().columns
+    max_desc_width = terminal_width - 24 - 1  # 24 for rule_key, 1 space
+
     # Generate the descriptions
     for rule_key in ctx.transfer_rules:
       description = describe(rule_key, ctx)
       if not do_update:
-        print(f'{rule_key}: {description}')
+        print(f'\x1b[2K\r{rule_key:24} {description[:max_desc_width]}', end='', flush=True)
+
     if do_update:
       # Bulk update the schema’s transfer_rules table, 100K rows at a time.
+      print('\nUpdate db')
       sql = psycopg.sql
       transfer_rules_list = list(ctx.transfer_rules.items())
       chunk_size = 100_000
@@ -229,8 +244,8 @@ if __name__ == '__main__':
          where t.rule_key = v.rule_key
         """).format(schema_name=sql.Identifier(schema_name), values=values_sql)
         cursor.execute(query)
-      print()
-      exit()
+    print()
+    exit()
 
   courses = dict()  # to short-circuit rule_keys lookup below
 
