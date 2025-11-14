@@ -1,4 +1,5 @@
 #! /usr/local/bin/python3
+# OBSOLETE: Use the module of the same name in the rule_descriptions project instead.
 """Generate the canonical description for each rule in a schema’s transfer_rules table.
 """
 

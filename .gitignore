@@ -1,2 +1,4 @@
 __pycache__/
-/reports/
+.aliases
+.flake8
+TODO.txt

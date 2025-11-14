@@ -1,4 +1,5 @@
 #! /usr/local/bin/python3
+# OBSOLETE Separate schemas for each archive date no longer being use.
 """ Generate descriptive statistics for one of the tables in a transfer archive schema.
 """
 import psycopg

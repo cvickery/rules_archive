@@ -1,4 +1,5 @@
 #! /usr/local/bin/python3
+# OBSOLETE Separate schemas for each archive date no longer being used.
 
 import psycopg
 

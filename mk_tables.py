@@ -1,4 +1,5 @@
 #! /usr/local/bin/python3
+# OBSOLETE: The changed_rules module does all this more efficiently and better.
 """Given a date, find the closest rules_archive set, and build a date-stamped
    version of the transfer_rules, source_courses, and destination_courses tables.
 

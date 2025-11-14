@@ -1,4 +1,6 @@
 #! /usr/local/bin/python3
+# OBSOLETE Separate schemas for each archive date no longer being used.
+
 """Drop all schemata created by mk_tables."""
 
 import psycopg
