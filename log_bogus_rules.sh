@@ -1,4 +1,5 @@
 #! /usr/local/bin/bash
+# OBSOLETE Separate schemas for each archive date no longer being used.
 
 # Usage: ./log_bogus_rules.sh [schema]
 schema_name="$1"
