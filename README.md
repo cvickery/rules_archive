@@ -2,7 +2,7 @@
 
 ## Project Replaced!
 
-See the [rule_changes](https://github.com/cvickery/rule_changes) for the current project used for showing transfer rule changes at CUNY.
+See the [rule_changes](https://github.com/cvickery/rule_changes) project for the current project used for showing transfer rule changes at CUNY.
 
 ***
 
